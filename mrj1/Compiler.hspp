@@ -1,0 +1,75 @@
+{-# LINE 1 "Compiler.hs" #-}
+module Compiler where
+
+{-# LANGUAGE CPP #-}
+import AbsInstant
+import qualified Data.Map as Map
+import Control.Monad.State
+import Control.Monad.Except
+import System.IO
+
+
+#ifdef JVM
+	import JVMAssembly
+#else
+	import LLVMAssembly
+#endif
+
+type CompilerEnv = (Map.Map String Int, AsmEnv)
+
+type CompilerMonad = StateT CompilerEnv (ExceptT String IO)
+
+type BinOp = (String -> String -> String -> (String, String))
+
+compile :: Handle -> Program -> IO ()
+compile outFile (Prog stmts) = do
+    hPutStr outFile $ header strs
+    result <- runCompiler $ prepareMonad outFile stmts strs
+    hPutStr outFile $ footer strs
+    case result of
+        Left s -> hPutStrLn stderr $ "Compile Error:\n" ++ s
+        Right _ -> return ()
+
+runCompiler :: CompilerMonad () -> IO (Either String ())
+runCompiler monad = 
+    runExceptT (evalStateT monad emptyEnv)
+
+prepareMonad :: Handle -> [Stmt] -> CompilerMonad ()
+prepareMonad _ [] _ = return ()
+prepareMonad handle (stmt:rest) = compileStmt stmt >>= 
+    liftIO $ hPutStr handle >> prepareMonad handle rest strs)--todo moze da sie lepiej to napisac
+
+compileStmt :: Stmt -> CompilerMonad String
+compileStmt stmt = 
+    case stmt of
+        SExp exp -> (compileExp exp >>= (\(expStr, loc) -> return $ (expHeader strs) ++ expStr ++ (expFooter loc)))
+        SAss (Ident ident) exp -> 
+            (compileExp exp >>= (\(expStr, resLoc) -> do
+                (env, asmEnv) <- get
+                case Map.lookup ident env of
+                    Nothing -> put (Map.insert ident (Map.size env) env, asmEnv) >> (return $ newVariable (show $ Map.size env) ++ expStr ++ (fst (store (show $ Map.size env) resLoc)))
+                    Just var_id -> return $ expStr ++ (fst (store (show var_id) resLoc))))
+
+compileExp :: Exp -> CompilerMonad (String, String)
+compileExp exp = do
+    (env, asmEnv) <- get
+    put (env, asmEnv + 1)
+    let loc = newExpLoc $ asmEnv in
+        case exp of
+            ExpAdd e1 e2 -> compileOp e1 e2 loc $ addE strs
+            ExpSub e1 e2 -> compileOp e1 e2 loc $ subE strs
+            ExpMul e1 e2 -> compileOp e1 e2 loc $ mulE strs
+            ExpDiv e1 e2 -> compileOp e1 e2 loc $ divE strs
+            ExpLit i -> return $ lit $ show i
+            ExpVar (Ident ident) -> do
+                var_id <- gets $ Map.lookup ident . fst
+                case var_id of
+                    Nothing -> throwError $ "Read before use\n"
+                    Just id -> return $ (load strs) (show id) loc
+
+compileOp :: Exp -> Exp -> String -> BinOp -> CompilerMonad (String, String)
+compileOp e1 e2 loc3 op = compileExp e1 >>= \(str1, loc1) -> compileExp e2 >>= \(str2, loc2) -> let (str3, loc4) = op loc1 loc2 loc3 in return $ (str1 ++ str2 ++ str3, loc3)
+
+emptyEnv :: CompilerEnv
+emptyEnv = (Map.empty, 0)
+

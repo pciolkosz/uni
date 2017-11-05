@@ -8,8 +8,8 @@ return
 .end method
 
 .method public static main([Ljava/lang/String;)V
-.limit stack 1000
-.limit locals 1000
+.limit stack 14
+.limit locals 24000
 bipush 0
 istore 0
 bipush 1

@@ -1,7 +1,9 @@
 all:
 	happy -gca ParInstant.y
 	alex -g LexInstant.x
-	ghc --make TestInstant.hs -o TestInstant
+	ghc -cpp -DJVM --make TestInstant.hs -o JVMCompiler
+	ghc -cpp -DLLVM --make TestInstant.hs -o LLVMCompiler
+	
 
 clean:
 	-rm -f *.log *.aux *.hi *.o *.dvi
