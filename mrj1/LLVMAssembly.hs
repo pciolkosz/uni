@@ -9,8 +9,16 @@ type CompilerEnv = (Map.Map String Int, Int)
 
 type CompilerMonad = StateT CompilerEnv (ExceptT String IO)
 
-preprocessProg :: [Stmt] -> ([Stmt], String)
-preprocessProg stmts = (stmts, "")
+runCompiler :: CompilerMonad String -> IO (Either String String)
+runCompiler monad =
+    runExceptT (evalStateT monad emptyEnv)
+
+prepareMonad :: [Stmt] -> CompilerMonad String 
+prepareMonad [] = return ""
+prepareMonad (stmt:rest) = do
+    stmtStr <- compileStmt stmt 
+    restStr <- prepareMonad rest 
+    return $ stmtStr ++ restStr
 
 header=const $ "@dnl = internal constant [4 x i8] c\"%d\\0A\\00\"\n" ++
         "declare i32 @printf(i8*, ...)\n" ++

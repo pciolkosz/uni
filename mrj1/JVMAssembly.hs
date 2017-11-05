@@ -5,31 +5,26 @@ import qualified Data.Map as Map
 import Control.Monad.State
 import Control.Monad.Except
 
-type CompilerEnv = Map.Map String Int
+type CompilerEnv = (Map.Map String Int, Int, Int)
 
 type CompilerMonad = StateT CompilerEnv (ExceptT String IO)
 
-preprocessProg :: [Stmt] -> ([Stmt], String)
-preprocessProg stmts = let stackLimit = maximum $ map calcStackStmt stmts in
-    let varLimit = sum $ map calcVars stmts in
-        (stmts, ".limit stack " ++ (show stackLimit) ++ 
-        "\n.limit locals " ++ (show varLimit) ++ "\n")
+runCompiler :: CompilerMonad String -> IO (Either String String)
+runCompiler monad =
+    runExceptT (evalStateT (monad >>= calcLimits) emptyEnv)
 
-calcStackStmt :: Stmt -> Int
-calcStackStmt stmt = case stmt of
-    SExp exp -> calcStackExp exp
-    SAss ident exp -> calcStackExp exp
+calcLimits :: String -> CompilerMonad String
+calcLimits progStr = do
+    (_, stack, locals) <- get
+    return $ ".limit stack " ++ (show $ stack + 2) ++
+        "\n.limit locals " ++ (show locals) ++ "\n" ++ progStr
 
-calcStackExp :: Exp -> Int
-calcStackExp exp = case exp of
-    ExpAdd e1 e2 -> max (calcStackExp e1) (calcStackExp e2 + 1)
-    ExpSub e1 e2 -> max (calcStackExp e1) (calcStackExp e2 + 1)
-    ExpMul e1 e2 -> max (calcStackExp e1) (calcStackExp e2 + 1)
-    ExpDiv e1 e2 -> max (calcStackExp e1) (calcStackExp e2 + 1)
-    ExpLit l -> 1
-    ExpVar v -> 1
-
-calcVars = const 1000
+prepareMonad :: [Stmt] -> CompilerMonad String 
+prepareMonad [] = return ""
+prepareMonad (stmt:rest) = do
+    stmtStr <- compileStmt stmt 
+    restStr <- prepareMonad rest 
+    return $ stmtStr ++ restStr
 
 header= \filename -> 
         ".class  public " ++ filename ++ "\n" ++
@@ -46,50 +41,58 @@ expHeader="getstatic java/lang/System/out Ljava/io/PrintStream;\n"
 expFooter="invokevirtual java/io/PrintStream/println(I)V\n"
 footer="return\n.end method\n"
 
+checkNewStack :: Int -> CompilerMonad ()
+checkNewStack newStack = modify (\(env, oldStack, vars) ->
+    (env, if newStack > oldStack then newStack else oldStack, vars))
 
 compileStmt :: Stmt -> CompilerMonad String
 compileStmt stmt =
     case stmt of
         SExp exp -> do
-            expStr <- compileExp exp
+            (expStr, stackS) <- compileExp exp
+            checkNewStack stackS
             return $ expHeader ++ expStr ++ expFooter
         SAss (Ident ident) exp -> do
-            expStr <- compileExp exp
+            (expStr, stackS) <- compileExp exp
+            checkNewStack stackS
             var_id <- findVar ident
             return $ expStr ++ "istore " ++ (show var_id) ++ "\n"
 
 findVar :: String -> CompilerMonad Int 
 findVar ident = do
-    env <- get
+    (env, locals, vars) <- get
     case Map.lookup ident env of
         Nothing ->
-            (put $ Map.insert ident (Map.size env) env) >>
+            (put (Map.insert ident (Map.size env) env, locals, vars + 1)) >>
             (return $ Map.size env)
         Just vid ->
             return vid
 
 
-compileExp :: Exp -> CompilerMonad String
+compileExp :: Exp -> CompilerMonad (String, Int)
 compileExp exp = do
-    env <- get
+    (env, _, _) <- get
     case exp of
-        ExpAdd e1 e2 -> compileOp e1 e2 "iadd\n"
-        ExpSub e1 e2 -> compileOp e1 e2 "isub\n"
-        ExpMul e1 e2 -> compileOp e1 e2 "imul\n"
-        ExpDiv e1 e2 -> compileOp e1 e2	"idiv\n"
-        ExpLit i -> return $ "bipush " ++ (show i) ++ "\n"
+        ExpAdd e1 e2 -> compileOp e1 e2 "iadd\n" True
+        ExpSub e1 e2 -> compileOp e1 e2 "isub\n" False
+        ExpMul e1 e2 -> compileOp e1 e2 "imul\n" True
+        ExpDiv e1 e2 -> compileOp e1 e2	"idiv\n" False
+        ExpLit i -> return ("bipush " ++ (show i) ++ "\n", 1)
         ExpVar (Ident ident) -> do
-            var_id <- gets $ Map.lookup ident
+            var_id <- gets (\(env, _, _) ->  Map.lookup ident env)
             case var_id of
                 Nothing -> throwError $ "Read before use\n"
-                Just vid -> return $ "iload " ++ (show vid) ++ "\n"
+                Just vid -> return ("iload " ++ (show vid) ++ "\n", 1)
 
-compileOp :: Exp -> Exp -> String -> CompilerMonad String
-compileOp e1 e2 op = do
-    str1 <- compileExp e1
-    str2 <- compileExp e2
-    return $ str1 ++ str2 ++ op
+compileOp :: Exp -> Exp -> String -> Bool -> CompilerMonad (String, Int)
+compileOp e1 e2 op commutative = do
+    (str1, stck1) <- compileExp e1
+    (str2, stck2) <- compileExp e2
+    if commutative && (stck1 < stck2)  then
+        return (str2 ++ str1 ++ op, stck1 + 1)
+    else
+        return (str1 ++ str2 ++ op, stck2 + 1)
 
 emptyEnv :: CompilerEnv
-emptyEnv = Map.empty
+emptyEnv = (Map.empty, 0, 1)
 
