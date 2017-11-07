@@ -1,0 +1,4 @@
+#!/bin/bash
+
+./JVMCompiler $1
+java -jar lib/jasmin.jar ${1/.ins/.j} -d $(dirname $1) 

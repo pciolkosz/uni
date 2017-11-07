@@ -1,0 +1,4 @@
+#!/bin/bash
+
+./LLVMCompiler $1
+llvm-as ${1/.ins/.ll} -o ${1/.ins/.bc}
