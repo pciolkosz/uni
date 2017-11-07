@@ -5,6 +5,7 @@ import qualified Data.Map as Map
 import Control.Monad.State
 import Control.Monad.Except
 
+--                 (Variables, registers counter)
 type CompilerEnv = (Map.Map String Int, Int)
 
 type CompilerMonad = StateT CompilerEnv (ExceptT String IO)

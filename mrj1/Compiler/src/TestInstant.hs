@@ -37,7 +37,7 @@ run v p f s = let ts = myLLexer s in case p ts of
                           putStrV v $ show ts
                           putStrLn s
                           exitFailure
-           Ok  tree -> do putStrLn "\nParse Successful!"
+           Ok  tree -> do 
                           compile f tree
                           exitSuccess
 

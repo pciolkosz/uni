@@ -1,0 +1,16 @@
+Piotr Ciołkosz - Kompilaator Instant do JVM i LLVM.
+
+Kompilacja za pomocą make. Projekt zaimplementowany w języku Haskell.
+
+Do parsowania używam plików wygenerowanych przez bnfc.
+
+Do działania potrzebna jest biblioteka Monad Transformer Library, która zawiera Control.Monad.Except i Control.Monad.State,
+które to nie są domyślnie zainstalowane na students.
+
+Aby zainstalować należy uruchomić cabal install mtl
+
+Wszystkie pliki źródłowe znajdują się w src. W korzeniu znajdują się skrypty insc_jvm i insc_llvm które uruchamiają
+odpowiednie kompilatory.
+
+Sam kompilator jest zaimplementowany w plikach JVMAssembly.hs i LLVMAssembly.hs, wraz z plikiem Compiler.hs,
+który zależnie od flagi kompilacji używa jednego z nich.

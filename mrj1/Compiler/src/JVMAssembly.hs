@@ -5,14 +5,12 @@ import qualified Data.Map as Map
 import Control.Monad.State
 import Control.Monad.Except
 
+--                 (Variables, maximal stack so far, variables count)
 type CompilerEnv = (Map.Map String Int, Int, Int)
 
 type CompilerMonad = StateT CompilerEnv (ExceptT String IO)
 
 outExt = "j"
-
---getOutPath :: FilePath -> FilePath
---getOutPath path = replaceExtension path "j"
 
 runCompiler :: CompilerMonad String -> IO (Either String String)
 runCompiler monad =
@@ -21,7 +19,7 @@ runCompiler monad =
 calcLimits :: String -> CompilerMonad String
 calcLimits progStr = do
     (_, stack, locals) <- get
-    return $ ".limit stack " ++ (show $ stack + 2) ++
+    return $ ".limit stack " ++ (show $ stack + 1) ++
         "\n.limit locals " ++ (show locals) ++ "\n" ++ progStr
 
 prepareMonad :: [Stmt] -> CompilerMonad String 
@@ -82,7 +80,11 @@ compileExp exp = do
         ExpSub e1 e2 -> compileOp e1 e2 "isub\n" False
         ExpMul e1 e2 -> compileOp e1 e2 "imul\n" True
         ExpDiv e1 e2 -> compileOp e1 e2	"idiv\n" False
-        ExpLit i -> return ("ldc " ++ (show i) ++ "\n", 1)
+        ExpLit i -> return ((
+            if (i >= -1) && (i <= 5) then "iconst_" else
+            if (i >= (-(2^7 - 1))) && (i <= (2^7 - 1)) then "bipush " else
+            if (i >= (-(2^15 - 1))) && (i <= (2^15 - 1)) then "sipush " else
+                "ldc ") ++ (show i) ++ "\n", 1)
         ExpVar (Ident ident) -> do
             var_id <- gets (\(env, _, _) ->  Map.lookup ident env)
             case var_id of
@@ -94,9 +96,9 @@ compileOp e1 e2 op commutative = do
     (str1, stck1) <- compileExp e1
     (str2, stck2) <- compileExp e2
     if stck1 < stck2 then
-            return (str2 ++ str1 ++ (if commutative then "" else "swap\n") ++ op, stck1 + 1)
+        return (str2 ++ str1 ++ (if commutative then "" else "swap\n") ++ op, stck2)
     else
-        return (str1 ++ str2 ++ op, stck2 + 1)
+        return (str1 ++ str2 ++ op, max stck1 (stck2 + 1))
 
 emptyEnv :: CompilerEnv
 emptyEnv = (Map.empty, 0, 1)
