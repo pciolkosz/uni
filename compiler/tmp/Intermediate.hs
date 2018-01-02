@@ -1,9 +1,13 @@
 module Intermediate where
 
+import AbsLatte
+
 data Instr
   = Iret Val
+  | Vret
   | Icall String 
-  | ICjmp ROp Val Val Blck
+  | ICjmp Val String
+  | IJmp String
   | Iassign Val Val
   | Iop Op Val Val Val
   | ISop SOp Val Val
@@ -13,16 +17,13 @@ data Instr
   | Inop
     deriving Show
 
-data Blck = Blck Name Instrs
+data Blck = Blck String Instrs | NoNameBlck Instrs
     deriving Show
 
-data Op = OpAdd | OpSub | OpMul | OpDiv | OpMod | OpAnd | OpOr
+data Op = Add AddOp | Mul MulOp | OpAnd | OpOr | Rel RelOp 
     deriving Show
 
 data SOp = Ng | Nt
-    deriving Show
-
-data ROp = RLTH | RLE | RGTH | RGE | REQU | RNE
     deriving Show
 
 data Val = VConst Int | VParam Int | VLocal Int | Loc Int | Name String
