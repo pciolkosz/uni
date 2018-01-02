@@ -1,0 +1,6 @@
+int main() {
+    dupa a;
+    dupa b;
+    a = b;
+    return 1;
+}

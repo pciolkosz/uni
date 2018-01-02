@@ -1,0 +1,10 @@
+class a {}
+class b extends a {}
+
+void main() {
+    a[][][][] z;
+    z = new a[][][][1];
+    z[0] = new a[][][1];
+    z[0][0] = new a[][1];
+    z[0][0][0] = new a[1];
+}
