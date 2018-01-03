@@ -153,8 +153,8 @@ instance Print Expr where
   prt i e = case e of
     EArrAcc expr1 expr2 -> prPrec i 6 (concatD [prt 6 expr1, doc (showString "["), prt 0 expr2, doc (showString "]")])
     ENull type_ -> prPrec i 6 (concatD [doc (showString "("), prt 0 type_, doc (showString ")null")])
-    EMember expr id -> prPrec i 6 (concatD [prt 6 expr, doc (showString "."), prt 0 id])
-    EMethod expr id exprs -> prPrec i 6 (concatD [prt 6 expr, doc (showString "."), prt 0 id, doc (showString "("), prt 0 exprs, doc (showString ")")])
+    EMember expr id -> prPrec i 6 (concatD [prt 0 expr, doc (showString "."), prt 0 id])
+    EMethod expr id exprs -> prPrec i 6 (concatD [prt 0 expr, doc (showString "."), prt 0 id, doc (showString "("), prt 0 exprs, doc (showString ")")])
     EVar id -> prPrec i 6 (concatD [prt 0 id])
     ELitInt n -> prPrec i 6 (concatD [prt 0 n])
     ELitTrue -> prPrec i 6 (concatD [doc (showString "true")])
@@ -184,11 +184,11 @@ instance Print MulOp where
 
 instance Print RelOp where
   prt i e = case e of
-    L -> prPrec i 0 (concatD [doc (showString "<")])
+    LTH -> prPrec i 0 (concatD [doc (showString "<")])
     LE -> prPrec i 0 (concatD [doc (showString "<=")])
-    G -> prPrec i 0 (concatD [doc (showString ">")])
+    GTH -> prPrec i 0 (concatD [doc (showString ">")])
     GE -> prPrec i 0 (concatD [doc (showString ">=")])
-    E -> prPrec i 0 (concatD [doc (showString "==")])
+    EQU -> prPrec i 0 (concatD [doc (showString "==")])
     NE -> prPrec i 0 (concatD [doc (showString "!=")])
 
 

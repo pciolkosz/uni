@@ -25,7 +25,7 @@ data MemberDef = MAttr Type [Item] | MMethod Type Ident [Arg] Block
 
 data Stmt
     = Alloc Expr Type
-    | ArrAlloc Expr Type Expr
+    | ArrAlloc Expr Type Integer
     | Empty
     | BStmt Block
     | Decl Type [Item]
@@ -48,7 +48,7 @@ data Item
     = NoInit Ident
     | Init Ident Expr
     | InitAlloc Ident Type
-    | ArrIAlloc Ident Type Expr
+    | ArrIAlloc Ident Type Integer
   deriving (Eq, Ord, Show, Read)
 
 data Type
@@ -87,6 +87,6 @@ data AddOp = Plus | Minus
 data MulOp = Times | Div | Mod
   deriving (Eq, Ord, Show, Read)
 
-data RelOp = L | LE | G | GE | E | NE
+data RelOp = LTH | LE | GTH | GE | EQU | NE
   deriving (Eq, Ord, Show, Read)
 
