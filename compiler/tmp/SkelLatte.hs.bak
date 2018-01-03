@@ -30,7 +30,7 @@ transMemberDef x = case x of
 transStmt :: Stmt -> Result
 transStmt x = case x of
   Alloc expr type_ -> failure x
-  ArrAlloc expr type_ integer -> failure x
+  ArrAlloc expr1 type_ expr2 -> failure x
   Empty -> failure x
   BStmt block -> failure x
   Decl type_ items -> failure x
@@ -52,7 +52,7 @@ transItem x = case x of
   NoInit ident -> failure x
   Init ident expr -> failure x
   InitAlloc ident type_ -> failure x
-  ArrIAlloc ident type_ integer -> failure x
+  ArrIAlloc ident type_ expr -> failure x
 transType :: Type -> Result
 transType x = case x of
   Arr type_ -> failure x

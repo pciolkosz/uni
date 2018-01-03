@@ -20,7 +20,7 @@ data Instr
   | Iprolog
     deriving Show
 
-data Blck = Blck String Instrs | NoNameBlck Instrs
+data Blck = FnBlck String Instrs | Blck String Instrs | NoNameBlck Instrs
     deriving Show
 
 data Op = Add AddOp | Mul MulOp | OpAnd | OpOr | Rel RelOp 
@@ -30,6 +30,6 @@ data SOp = Ng | Nt
     deriving Show
 
 data Val = VConst Int | VParam Int | VLocal Int | Loc Int | Name String
-    deriving Show
+    deriving (Show, Eq)
 
 type Instrs = [Instr]

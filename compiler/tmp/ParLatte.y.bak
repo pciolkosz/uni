@@ -129,8 +129,8 @@ ListType : {- empty -} { [] }
 Expr6 :: { Expr }
 Expr6 : Expr6 '[' Expr ']' { AbsLatte.EArrAcc $1 $3 }
       | '(' Type ')null' { AbsLatte.ENull $2 }
-      | Expr '.' Ident { AbsLatte.EMember $1 $3 }
-      | Expr '.' Ident '(' ListExpr ')' { AbsLatte.EMethod $1 $3 $5 }
+      | Expr6 '.' Ident { AbsLatte.EMember $1 $3 }
+      | Expr6 '.' Ident '(' ListExpr ')' { AbsLatte.EMethod $1 $3 $5 }
       | Ident { AbsLatte.EVar $1 }
       | Integer { AbsLatte.ELitInt $1 }
       | 'true' { AbsLatte.ELitTrue }

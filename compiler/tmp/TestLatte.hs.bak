@@ -39,7 +39,8 @@ run v p s = let ts = myLLexer s in case p ts of
            Ok  tree -> do putStrLn "\nParse Successful!"
                           showTree v tree
                           typesOk <- checkTypes tree
-                          if typesOk then let inter = translate tree in do
+                          if typesOk then do
+                                inter <- translate tree
                                 putStrLn $ show $ inter
                                 putStrLn $ compile inter
                                 exitSuccess

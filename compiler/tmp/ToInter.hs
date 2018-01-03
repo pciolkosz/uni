@@ -17,7 +17,7 @@ type TranslatorMonad = WriterT [Blck] (StateT TransState (Reader TransEnv))
 
 
 translate :: Program -> [Blck]
-translate (Program defs) = runReader (evalStateT (execWriterT $ prepTransMonad defs) (1, 0)) (Map.empty, 0)
+translate (Program defs) = runReader (evalStateT (execWriterT $ prepTransMonad defs) (1, 0)) (Map.empty, 1)
 
 prepTransMonad :: [TopDef] -> TranslatorMonad ()
 prepTransMonad [] = return () 
@@ -27,7 +27,7 @@ transDef :: TopDef -> TranslatorMonad ()
 transDef (FnDef ftype (Ident ident) args (Block stmts)) = let argsLen = length args in
     local (\(env, locals) -> (Map.union 
         (Map.fromList (zipWith (\(Arg _ (Ident ident)) nr -> (ident, VParam nr)) args [argsLen - 1, argsLen - 2..0]))
-        env, locals)) $ transStmts stmts (Blck ident [IgrowStack $ argsLen, Iprolog]) >> return ()
+        env, locals)) $ transStmts stmts (FnBlck ident []) >> return ()
 
 getFromEnv :: String -> TranslatorMonad Val
 getFromEnv ident = asks $ (fromJust . Map.lookup ident) . fst
@@ -45,7 +45,7 @@ newLabel :: TranslatorMonad String
 newLabel = do
     (regNr, labNr) <- get
     put (regNr, labNr + 1)
-    return (('L':show labNr) ++ ":")
+    return ('L':show labNr)
 
 --TODO throw away
 --assignVal :: String -> Expr -> (Instrs -> TranslatorMonad a) -> TranslatorMonad a
@@ -64,19 +64,26 @@ declAssigns (item:rest) monad prevs = case item of
 assign :: Val -> Expr -> TranslatorMonad [Instr]
 assign val expr = do
     (expVal, expInstrs) <- transExp expr
-    return $ expInstrs ++ [(Iassign val expVal)]
+    return $ (Iassign val expVal):expInstrs
     
 
 addInstrs :: Instrs -> Blck -> Blck
 addInstrs newInstrs blck = case blck of
     Blck name instrs -> Blck name $ newInstrs ++ instrs
+    FnBlck name instrs -> FnBlck name $ newInstrs ++ instrs
     NoNameBlck instrs -> NoNameBlck $ newInstrs ++ instrs
 
+tellBlck :: Blck -> TranslatorMonad ()
+tellBlck (FnBlck name instrs) = do
+    locals <- asks snd
+    tell [Blck name (instrs ++ [IgrowStack locals, Iprolog])]
+tellBlck blck = tell [blck]
+
 transStmts :: [Stmt] -> Blck -> TranslatorMonad () 
-transStmts [] blck = tell [blck]
+transStmts [] blck = tellBlck blck
 transStmts (stmt:rest) blck = case stmt of
     Empty -> transStmts rest $ addInstrs [Inop] blck
-    BStmt (Block stmts) -> transStmts stmts (NoNameBlck []) >> (transStmts rest) blck
+    BStmt (Block stmts) -> tellBlck blck >> transStmts stmts (NoNameBlck []) >> (transStmts rest) (NoNameBlck [])
     Decl dtype items -> declAssigns items (\assignInstrs -> transStmts rest $ addInstrs assignInstrs blck) []
     Ass expr1 expr2 -> do
         (val, exp1Ins) <- transExp expr1
@@ -96,13 +103,13 @@ transStmts (stmt:rest) blck = case stmt of
         nextLabel <- newLabel
         (val, expInstrs) <- transExp $ expr
         transStmts [eStmt] $ addInstrs (ICjmp val ifLabel:expInstrs) blck
-        unless (null rest) $ tell [NoNameBlck [(IJmp nextLabel)]]
+        unless (null rest) $ tellBlck $ NoNameBlck [(IJmp nextLabel)]
         transStmts [iStmt] $ Blck ifLabel []
         unless (null rest) $ transStmts rest $ Blck nextLabel []
     While expr stmt -> do
         checkLabel <- newLabel
         loopLabel <- newLabel
-        tell [addInstrs [IJmp checkLabel] blck]
+        tellBlck $ addInstrs [IJmp checkLabel] blck
         transStmts [stmt] $ Blck loopLabel []
         (val, expInstrs) <- transExp $ expr
         transStmts rest $ Blck checkLabel (ICjmp val loopLabel:expInstrs)

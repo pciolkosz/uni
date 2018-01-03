@@ -92,10 +92,10 @@ transMulOp x = case x of
   Mod -> failure x
 transRelOp :: RelOp -> Result
 transRelOp x = case x of
-  LTH -> failure x
+  L -> failure x
   LE -> failure x
-  GTH -> failure x
+  G -> failure x
   GE -> failure x
-  EQU -> failure x
+  E -> failure x
   NE -> failure x
 

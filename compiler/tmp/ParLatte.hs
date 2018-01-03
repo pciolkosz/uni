@@ -1040,7 +1040,7 @@ happyReduction_82 happy_x_1
 happyReduce_83 = happySpecReduce_1  27# happyReduction_83
 happyReduction_83 happy_x_1
 	 =  happyIn31
-		 (AbsLatte.LTH
+		 (AbsLatte.L
 	)
 
 happyReduce_84 = happySpecReduce_1  27# happyReduction_84
@@ -1052,7 +1052,7 @@ happyReduction_84 happy_x_1
 happyReduce_85 = happySpecReduce_1  27# happyReduction_85
 happyReduction_85 happy_x_1
 	 =  happyIn31
-		 (AbsLatte.GTH
+		 (AbsLatte.G
 	)
 
 happyReduce_86 = happySpecReduce_1  27# happyReduction_86
@@ -1064,7 +1064,7 @@ happyReduction_86 happy_x_1
 happyReduce_87 = happySpecReduce_1  27# happyReduction_87
 happyReduction_87 happy_x_1
 	 =  happyIn31
-		 (AbsLatte.EQU
+		 (AbsLatte.E
 	)
 
 happyReduce_88 = happySpecReduce_1  27# happyReduction_88

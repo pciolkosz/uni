@@ -121,7 +121,7 @@ checkExpr expr = case expr of
         return Bool
     EMul e1 _ e2 -> checkBinOp e1 e2 [Int] $ printTree expr
     EAdd e1 _ e2 -> checkBinOp e1 e2 [Int, Str] $ printTree expr
-    ERel e1 op e2 -> if op == EQU || op == NE 
+    ERel e1 op e2 -> if op == E || op == NE 
         then 
             do
                 t1 <- checkExpr e1

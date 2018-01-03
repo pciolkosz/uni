@@ -163,11 +163,11 @@ MulOp : '*' { AbsLatte.Times }
       | '/' { AbsLatte.Div }
       | '%' { AbsLatte.Mod }
 RelOp :: { RelOp }
-RelOp : '<' { AbsLatte.LTH }
+RelOp : '<' { AbsLatte.L }
       | '<=' { AbsLatte.LE }
-      | '>' { AbsLatte.GTH }
+      | '>' { AbsLatte.G }
       | '>=' { AbsLatte.GE }
-      | '==' { AbsLatte.EQU }
+      | '==' { AbsLatte.E }
       | '!=' { AbsLatte.NE }
 {
 
