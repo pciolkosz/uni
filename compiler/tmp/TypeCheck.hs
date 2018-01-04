@@ -12,13 +12,13 @@ type TCMonad = ReaderT TCEnv (Except String)
 
 type TCEnv = (Map.Map Ident Type, Map.Map Ident (Map.Map Ident Type, [Ident]))
 
-checkTypes :: Program -> IO Bool
+checkTypes :: Program -> IO (Bool, Map.Map Ident Type)
 checkTypes (Program defs) = do 
     case runExcept $ prepareTopEnv defs startEnv of
-        Left errMsg -> putStr errMsg >> return False
+        Left errMsg -> putStr errMsg >> return (False, Map.empty)
         Right env -> case runExcept $ runReaderT (prepareTCMonad defs) env of
-            Left errMsg -> putStr (errMsg ++ "\n")  >> return False
-            Right _ -> putStr "types OK\n" >> return True
+            Left errMsg -> putStr (errMsg ++ "\n")  >> return (False, Map.empty)
+            Right _ -> putStr "types OK\n" >> return (True, fst env)
 
 prepareTopEnv :: [TopDef] -> TCEnv -> Except String TCEnv 
 prepareTopEnv [] env = return env
@@ -263,10 +263,7 @@ checkAncs _ _ eMsg = throwError eMsg
 startEnv :: TCEnv
 startEnv = (Map.fromList [(Ident "printInt", Fun Void [Int]),
     (Ident "printString", Fun Void [Str]), (Ident "error", Fun Void []),
-    (Ident "readInt", Fun Int []), (Ident "readString", Fun Void [])], Map.empty)
-
---localC :: (TCEnv -> TCEnv) -> TCMonad a -> TCMonad a
---localC func monad = local (\(funs, clses) -> (funs, func clses)) monad
+    (Ident "readInt", Fun Int []), (Ident "readString", Fun Str [])], Map.empty)
 
 localF :: (Map.Map Ident Type -> Map.Map Ident Type) -> TCMonad a -> TCMonad a
 localF func monad = local (\(funs, clses) -> (func funs, clses)) monad

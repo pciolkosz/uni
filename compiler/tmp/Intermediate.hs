@@ -18,18 +18,21 @@ data Instr
   | IcutStack Int
   | Inop
   | Iprolog
+  | Iswap
     deriving Show
 
 data Blck = FnBlck String Instrs | Blck String Instrs | NoNameBlck Instrs
     deriving Show
 
-data Op = Add AddOp | Mul MulOp | OpAnd | OpOr | Rel RelOp 
-    deriving Show
+data Op = Add AddOp | Mul MulOp | OpAnd | OpOr | Rel RelOp | OpStrAdd 
+    deriving (Show, Eq)
 
 data SOp = Ng | Nt
     deriving Show
 
-data Val = VConst Int | VParam Int | VLocal Int | Loc Int | Name String
+data Val = VConst Int | VParam Int Type | VLocal Int Type | Loc Int Type | Reg String Type | LitStr String
     deriving (Show, Eq)
 
 type Instrs = [Instr]
+
+type Literal = (String, String)

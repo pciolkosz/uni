@@ -1,7 +1,20 @@
 /* Fibonacci. */
 
+int times2(int i) {
+    return i * 2;
+}
+
+int times3(int i) {
+    return i * 3;
+}
+
 int main () {
+  printInt(times2(1) + times3(3));
   int lo,hi,mx ;
+  string s = "a";
+  string t = "b";
+  t = s + t;
+  printString(t);
   lo = 1 ;
   hi = lo ;
   mx = 5000000 ;

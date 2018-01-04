@@ -10,17 +10,17 @@ type CompilerState = [Val]
 
 type CompilerMonad = StateT CompilerState (Writer String)
 
-compile :: [Blck] -> String
-compile blcks = "section .text\nglobal main\nextern printInt\n\n" ++ 
-    (execWriter $ evalStateT (prepCompMonad blcks) []) ++
-    "\n\nsection .bss\n__TMPREGS__:\nresb 1024\n" --TODO dynamic resb
+compile :: ([Blck], [Literal], Int) -> String
+compile (blcks, literals, regs) = "section .text\n" ++ externs ++ 
+    (execWriter $ evalStateT (prepCompMonad blcks) []) ++  
+    "\n\nsection .bss\n__TMPREGS__:\nresb " ++ (show $ regs * 4) ++ 
+    "\n\nsection .data\n" ++ (compileLiterals literals)
 
 prepCompMonad :: [Blck] -> CompilerMonad ()
 prepCompMonad [] = return ()
 prepCompMonad (blck:rest) = case blck of
-    NoNameBlck instrs -> compileInstrs (reverse instrs) >> prepCompMonad rest
-    Blck name instrs -> tellLane (name ++ ":") >> compileInstrs (reverse instrs) >> prepCompMonad rest
-    FnBlck name instrs -> tellLane (name ++ ":") >> compileInstrs (reverse instrs) >> prepCompMonad rest
+    NoNameBlck instrs -> compileInstrs (reverse instrs) >> put [] >> prepCompMonad rest
+    Blck name instrs -> tellLane (name ++ ":") >> put [] >> compileInstrs (reverse instrs) >> prepCompMonad rest
 
 compileInstrs :: Instrs -> CompilerMonad ()
 compileInstrs [] = return ()
@@ -34,7 +34,7 @@ compileInstrs (instr:rest) = (case instr of
         tellLane "ret"
     Icall l -> do 
         tellLane $ "call " ++ l
-        put $ [Loc 0]
+        put $ [Reg "eax" Void] -- void for placeholder
     ICjmp val l -> do
         movToEax val
         tellLane $ "test eax, eax"
@@ -52,17 +52,19 @@ compileInstrs (instr:rest) = (case instr of
                 tellLane $ "mov DWORD " ++ dstRep ++ ", " ++ srcRep
     Iop op dst oper1 oper2 -> do
         dstRep <- getValRep dst
+        opr1Rep <- getValRep oper1
+        unless (op == OpStrAdd || opr1Rep == "edx") $ movToEax oper1
         opr2Rep <- getValRep oper2
-        movToEax oper1
         tellLane $ case op of
             Add Plus -> "add eax, " ++ opr2Rep
             Add Minus -> "sub eax, " ++ opr2Rep
             Mul Times -> "imul eax, " ++ opr2Rep
-            Mul Div -> "idiv " ++ opr2Rep
-            Mul Mod -> "idiv " ++ opr2Rep ++ "\nmov eax, edx"
+            Mul Div -> "xor edx, edx\nmov ecx, " ++ opr2Rep ++ "\nidiv ecx"
+            Mul Mod -> "xor edx, edx\nmov ecx, " ++ opr2Rep ++ "\nidiv ecx\nmov eax, edx"
             OpAnd -> "and eax, " ++ opr2Rep
             OpOr -> "or eax, " ++ opr2Rep
             Rel rop -> "cmp eax, " ++ opr2Rep ++ "\nset" ++ (toLower <$> show rop) ++ " al\nand eax, 0xff"
+            OpStrAdd -> "push DWORD " ++ opr2Rep ++ "\npush DWORD " ++ opr1Rep ++ "\ncall __CONCAT_STRINGS__\nsub esp, 8"
         tellLane $ "mov " ++ dstRep ++ ", eax"
         put [dst]
     ISop op dst src -> do
@@ -78,16 +80,17 @@ compileInstrs (instr:rest) = (case instr of
         tellLane $ "push DWORD " ++ valRep
     Inc val -> do
         valRep <- getValRep val
-        tellLane $ "inc " ++ valRep
+        tellLane $ "inc DWORD " ++ valRep
     Dec val -> do
         valRep <- getValRep val
-        tellLane $ "dec " ++ valRep
+        tellLane $ "dec DWORD " ++ valRep
     IgrowStack i -> if i == 0 then return () else tellLane $ "sub esp, " ++ (s4 i)
     IcutStack i -> if i == 0 then return () else tellLane $ "add esp, " ++ (s4 i)
     Inop -> tellLane "nop"
     Iprolog -> do
         tellLane "push ebp"
         tellLane "mov ebp, esp"
+    Iswap -> tellLane "xchg eax, edx"
     ) >> compileInstrs rest
 
 
@@ -100,13 +103,17 @@ getValRep val = do
     currEax <- get
     return $ if (elem val currEax) then "eax" else case val of
         VConst i -> show i
-        VParam i -> "[ebp + " ++ (s4 i) ++ "]"
-        VLocal i -> "[ebp - " ++ (s4 i) ++ "]"
-        Loc i -> "[__TMPREGS__ + " ++ (s4 i) ++ "]"
+        VParam i _ -> "[ebp + " ++ (s4 i) ++ "]"
+        VLocal i _ -> "[ebp - " ++ (s4 i) ++ "]"
+        Loc i _ -> "[__TMPREGS__ + " ++ (s4 i) ++ "]"
+        Reg r _ -> r
+        LitStr label -> label
 
 bothMem :: Val -> Val -> Bool
 bothMem (VConst _) _ = False
 bothMem _ (VConst _) = False
+bothMem (LitStr _) _ = False
+bothMem _ (LitStr _) = False
 bothMem _ _ = True
 
 s4 :: Int -> String
@@ -115,4 +122,9 @@ s4 i = show $ i * 4
 movToEax :: Val -> CompilerMonad ()
 movToEax val = do
     valRep <- getValRep val
-    unless (valRep == "eax") $ tellLane ("mov eax, " ++ valRep) >> put [val]
+    unless (valRep == "eax") $ tellLane ("mov eax, " ++ valRep)
+
+compileLiterals :: [Literal] -> String
+compileLiterals = concat . map (\(lab, val) -> lab ++ "  db '" ++ val ++ "',0\n")
+
+externs = "global main\nextern printInt\nextern printString\nextern readInt\nextern readString\nextern error\nextern __CONCAT_STRINGS__\n\n" 
