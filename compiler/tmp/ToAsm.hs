@@ -29,6 +29,7 @@ compileInstrs (instr:rest) = (case instr of
         movToEax val
         tellLane "leave"
         tellLane "ret"
+        put []
     Vret -> do
         tellLane "leave"
         tellLane "ret"
@@ -39,6 +40,7 @@ compileInstrs (instr:rest) = (case instr of
         movToEax val
         tellLane $ "test eax, eax"
         tellLane $ "jne " ++ l
+        put []
     IJmp l -> tellLane $ "jmp " ++ l
     Iassign dst src -> do
         srcRep <- getValRep src
@@ -53,7 +55,7 @@ compileInstrs (instr:rest) = (case instr of
     Iop op dst oper1 oper2 -> do
         dstRep <- getValRep dst
         opr1Rep <- getValRep oper1
-        unless (op == OpStrAdd || opr1Rep == "edx") $ movToEax oper1
+        unless (op == OpStrAdd || opr1Rep == "edx") $ movToEax oper1 >> put []
         opr2Rep <- getValRep oper2
         tellLane $ case op of
             Add Plus -> "add eax, " ++ opr2Rep
@@ -75,9 +77,6 @@ compileInstrs (instr:rest) = (case instr of
             Nt -> "xor eax, 1"
         tellLane $ "mov " ++ dstRep ++ ", eax"
         put [dst]
-    Iparam val -> do
-        valRep <- getValRep val
-        tellLane $ "push DWORD " ++ valRep
     Inc val -> do
         valRep <- getValRep val
         tellLane $ "inc DWORD " ++ valRep
@@ -90,7 +89,12 @@ compileInstrs (instr:rest) = (case instr of
     Iprolog -> do
         tellLane "push ebp"
         tellLane "mov ebp, esp"
-    Iswap -> tellLane "xchg eax, edx"
+    Ipush val -> do
+        valRep <- getValRep val
+        tellLane $ "push DWORD " ++ valRep
+    Ipop val -> do
+        valRep <- getValRep val
+        tellLane $ "pop DWORD " ++ valRep
     ) >> compileInstrs rest
 
 
@@ -102,7 +106,7 @@ getValRep :: Val -> CompilerMonad String
 getValRep val = do
     currEax <- get
     return $ if (elem val currEax) then "eax" else case val of
-        VConst i -> show i
+        VConst i _ -> show i
         VParam i _ -> "[ebp + " ++ (s4 i) ++ "]"
         VLocal i _ -> "[ebp - " ++ (s4 i) ++ "]"
         Loc i _ -> "[__TMPREGS__ + " ++ (s4 i) ++ "]"
@@ -110,8 +114,8 @@ getValRep val = do
         LitStr label -> label
 
 bothMem :: Val -> Val -> Bool
-bothMem (VConst _) _ = False
-bothMem _ (VConst _) = False
+bothMem (VConst _ _) _ = False
+bothMem _ (VConst _ _) = False
 bothMem (LitStr _) _ = False
 bothMem _ (LitStr _) = False
 bothMem _ _ = True

@@ -1,0 +1,21 @@
+int main() {
+printInt (fac (10)) ;
+  printInt (fac (10)) ;
+  printInt (fac (10)) ;
+  printInt (fac (10)) ;
+  string r ;
+  {
+    int n = 10 ;
+    int r = 1 ;
+    while (n > 0){
+      r = r * n ;
+      n -- ;
+    }
+    printInt (r);
+  }
+return 0;
+}
+
+int fac(int i) {
+    return i * 2;
+}

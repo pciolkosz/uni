@@ -17,7 +17,11 @@ void error() {
 
 int readInt() {
     int i;
-    if (scanf("%d", &i));
+    char* buff = 0;
+    size_t n = 0;
+    if (getline(&buff, &n, stdin));
+    if (sscanf(buff, "%d", &i));
+    free(buff);
     return i;
 }
 

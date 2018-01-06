@@ -56,12 +56,17 @@ newLabel = do
 declAssigns :: Type -> [Item] -> (Instrs -> TranslatorMonad ()) -> [Instrs] -> TranslatorMonad ()
 declAssigns _ [] monad prevs = monad $ concat prevs
 declAssigns dtype (item:rest) monad prevs = case item of
-    NoInit ident -> newLocal ident dtype $ declAssigns dtype rest monad prevs --TODO default init
+    NoInit ident -> declAssigns dtype (Init ident (defaultValExpr dtype):rest) monad prevs
     Init ident expr -> do
         (_, locNr, _) <- ask
         assignInstrs <- assign (VLocal locNr dtype) expr
         newLocal ident dtype $ declAssigns dtype rest monad (assignInstrs:prevs) 
 
+defaultValExpr :: Type -> Expr
+defaultValExpr t = case t of
+    Int -> ELitInt 0
+    Str -> EString ""
+    Bool -> ELitFalse
 
 assign :: Val -> Expr -> TranslatorMonad [Instr]
 assign val expr = do
@@ -91,6 +96,8 @@ transStmts (stmt:rest) blck = case stmt of
         (val, exp1Ins) <- transExp expr1
         assignInstrs <- assign val expr2
         transStmts rest $ addInstrs (assignInstrs ++ exp1Ins) blck
+    Incr (Ident ident) -> getFromEnv ident >>= \val -> transStmts rest $ addInstrs [Inc val] blck
+    Decr (Ident ident) -> getFromEnv ident >>= \val -> transStmts rest $ addInstrs [Dec val] blck
     Ret expr -> transExp expr >>= \(val, expInstrs) -> transStmts rest $ addInstrs ((Iret val):expInstrs) blck
     VRet -> transStmts rest $ addInstrs [Vret] blck
     Cond expr stmt -> do
@@ -118,14 +125,14 @@ transStmts (stmt:rest) blck = case stmt of
 transExp :: Expr -> TranslatorMonad (Val, [Instr])
 transExp expr = case expr of
     EVar (Ident i) -> getFromEnv i >>= (\val -> return (val, []))
-    ELitInt i -> return (VConst (fromInteger i), [])
-    ELitTrue -> return (VConst 1, [])
-    ELitFalse -> return (VConst 0, [])
+    ELitInt i -> return (VConst (fromInteger i) Int, [])
+    ELitTrue -> return (VConst 1 Bool, [])
+    ELitFalse -> return (VConst 0 Bool, [])
     EApp fid@(Ident ident) params -> do 
-        instrs <- liftM concat (mapM (liftM (\(val, instrs) -> ((Iparam val):instrs)) . transExp) $ reverse params)
+        instrs <- liftM concat (mapM (liftM (\(val, instrs) -> ((Ipush val):instrs)) . transExp) $ reverse params)
         (_, _, fTypes) <- ask
-        let retT = fromJust $ Map.lookup fid fTypes
-        return (Reg "eax" retT, (IcutStack (length params):Icall ident:instrs)) --TODO placeholder void
+        let (Fun retT _) = fromJust $ Map.lookup fid fTypes
+        return (Reg "eax" retT, (IcutStack (length params):Icall ident:instrs))
     EString lit -> do
         litLabel <- newLabel
         lift . tell $ [(litLabel, lit)]
@@ -155,19 +162,20 @@ binOp expr1 expr2 op = do
         let resultT = getBinOpType (op, v1T, getValType val2) in
             let result = Loc regNr resultT in
                  let resultOp = if (op, resultT) == (Add Plus, Str) then OpStrAdd else op in
-                    if bothEax val1 val2 then
-                        return (result, (Iop resultOp result (Reg "eax" v1T) (Reg "edx" v1T)):
-                            (Iswap:instrs2 ++ Iassign (Reg "edx" v1T) (Reg "eax" v1T):instrs1))
+                    if isEax val2 then
+                        return $ (result, (Iop resultOp result (Reg "eax" v1T) (Reg "edx" v1T)):
+                            (Ipop (Reg "eax" v1T)):
+                                (Iassign (Reg "edx" v1T) (Reg "eax" v1T)):(instrs2 ++ (Ipush val1:instrs1))) --TODO v2t
                     else return (result, (Iop resultOp result val1 val2):(instrs2 ++ instrs1))
 
 
-bothEax :: Val -> Val -> Bool
-bothEax (Reg "eax" _) (Reg "eax" _) = True
-bothEax _ _ = False
+isEax :: Val -> Bool
+isEax (Reg "eax" _) = True
+isEax _ = False
 
 getValType :: Val -> Type
 getValType val = case val of
-    VConst _ -> Int
+    VConst _ t -> t
     VParam _ t -> t
     VLocal _ t -> t
     Loc _ t -> t
@@ -178,4 +186,4 @@ getBinOpType :: (Op, Type, Type) -> Type
 getBinOpType b = case b of
     (Rel _, Int, Int) -> Bool
     (Add Plus, Str, Str) -> Str
-    (_, t1, t2) -> if t1 == t2 then t1 else error $ "Typecheck is wrong" ++ (show t1) ++ (show t2)
+    (_, t1, t2) -> if t1 == t2 then t1 else error $ "Typecheck is wrong" ++ (show t1) ++ (show t2) ++ (show b)

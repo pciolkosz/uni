@@ -8,9 +8,11 @@ import Data.Maybe
 import AbsLatte
 import PrintLatte
 
+-- returny i duplikacja zmiennych/parametrów
+
 type TCMonad = ReaderT TCEnv (Except String)
 
-type TCEnv = (Map.Map Ident Type, Map.Map Ident (Map.Map Ident Type, [Ident]))
+type TCEnv = (Map.Map Ident Type, Map.Map Ident (Map.Map Ident Type, [Ident]), [Ident])
 
 checkTypes :: Program -> IO (Bool, Map.Map Ident Type)
 checkTypes (Program defs) = do 
@@ -18,16 +20,16 @@ checkTypes (Program defs) = do
         Left errMsg -> putStr errMsg >> return (False, Map.empty)
         Right env -> case runExcept $ runReaderT (prepareTCMonad defs) env of
             Left errMsg -> putStr (errMsg ++ "\n")  >> return (False, Map.empty)
-            Right _ -> putStr "types OK\n" >> return (True, fst env)
+            Right _ -> putStr "types OK\n" >> return (True, fst3 env)
 
 prepareTopEnv :: [TopDef] -> TCEnv -> Except String TCEnv 
 prepareTopEnv [] env = return env
-prepareTopEnv (def:rest) (vEnv, cEnv) =
+prepareTopEnv (def:rest) (vEnv, cEnv, d) =
     let envMonad = case def of {
-        FnDef t ident args _ -> return (Map.insert ident (Fun t (map a2t args)) vEnv, cEnv);
-        ClDef ident members -> return (vEnv, Map.insert ident (prepClsTopEnv members, []) cEnv);
+        FnDef t ident args _ -> return (Map.insert ident (Fun t (map a2t args)) vEnv, cEnv, d);
+        ClDef ident members -> return (vEnv, Map.insert ident (prepClsTopEnv members, []) cEnv, d);
         DepClDef ident anc members -> case Map.lookup anc cEnv of
-            Just (ancEnv, superClses) -> return (vEnv, Map.insert ident (Map.union (prepClsTopEnv members) ancEnv, (anc:superClses)) cEnv)
+            Just (ancEnv, superClses) -> return (vEnv, Map.insert ident (Map.union (prepClsTopEnv members) ancEnv, (anc:superClses)) cEnv, d)
             Nothing -> throwError $ "Class " ++ (printTree ident) ++ " can't extend unknown class " ++ (printTree anc) ++ "\n"} 
     in envMonad >>= \newEnv -> prepareTopEnv rest newEnv
 
@@ -35,8 +37,8 @@ prepareTCMonad :: [TopDef] -> TCMonad ()
 prepareTCMonad [] = return ()
 prepareTCMonad (def:rest) = case def of {
     FnDef t _ args (Block body) ->  checkFunc args body t;
-    ClDef ident members -> findClassEnv ident >>= \env -> localF (Map.union env) $ checkMembers members;
-    DepClDef ident anc members -> findClassEnv ident >>= \env -> localF (Map.union env) $ checkMembers members
+    ClDef ident members -> findClassEnv ident >>= \env -> localF (Map.union env) [] $ checkMembers members;
+    DepClDef ident anc members -> findClassEnv ident >>= \env -> localF (Map.union env) [] $ checkMembers members
 } >> prepareTCMonad rest --TODO last to cases are the same
 
 prepClsTopEnv :: [MemberDef] -> Map.Map Ident Type
@@ -136,6 +138,7 @@ checkExpr expr = case expr of
 checkCall :: [Expr] -> [Type] -> String -> TCMonad ()
 checkCall exprs types errMsg = do 
     args <- mapM checkExpr exprs
+    unless (length exprs == length types) $  throwError $ "Wrong number of parameters in " ++ errMsg
     foldl (>>) (return ()) $ zipWith (sameTypesOrErr' errMsg) types args
 
 checkBinOp :: Expr -> Expr -> [Type] -> String -> TCMonad Type
@@ -150,8 +153,11 @@ checkBinOp e1 e2 types errMsg = do
 checkStmts :: [Stmt] -> Type -> TCMonad ()
 checkStmts [] _ = return ()
 checkStmts (stmt:rest) retT = case stmt of
-    Decl t items -> ask >>= (checkDecls items t . fst) >>= 
-        \newEnv -> localF (const newEnv) $ checkStmts rest retT
+    Decl t items -> let newIds = (map i2id items) in let repId = hasRepeated newIds in do
+        unless (repId == Nothing) $ throwError $ "Repeated declaration " ++ (show repId)
+        env <- ask
+        newEnv <- checkDecls items t . fst3 $ env
+        localF (const newEnv) (newIds) $ checkStmts rest retT
     _ -> (case stmt of
         Alloc expr t1 -> do
             t2 <- checkExpr expr
@@ -162,7 +168,7 @@ checkStmts (stmt:rest) retT = case stmt of
             sameTypesOrErr t2 (Arr t1) $ printTree stmt
             sameTypesOrErr t3 Int $ printTree stmt
         Empty -> return ()
-        BStmt (Block stmts) -> checkStmts stmts retT
+        BStmt (Block stmts) -> local (\(v, c, _) -> (v, c, [])) $ checkStmts stmts retT
         Ass e1 e2 -> do
             t1 <- checkExpr e1
             t2 <- checkExpr e2
@@ -198,23 +204,27 @@ checkStmts (stmt:rest) retT = case stmt of
         SFor varT varId arrId st -> do
             arrT <- findType arrId
             case arrT of
-                Just (Arr t) -> localF (Map.insert varId varT) $ checkStmts [st] retT
-                _ -> throwError $ printTree stmt) --TODO better eMsg
-        >> checkStmts rest retT
+                Just (Arr t) -> localF (Map.insert varId varT) [] $ checkStmts [st] retT
+                _ -> throwError $ printTree stmt) >> checkStmts rest retT
     
 
 checkDecls :: [Item] -> Type -> Map.Map Ident Type -> TCMonad (Map.Map Ident Type)
 checkDecls [] _ map = return map
-checkDecls (item:rest) t map = (typeCorrect t (printTree item)) >> (case item of
-    NoInit ident -> return $ Map.insert ident t map
+checkDecls (item:rest) t map = (typeCorrect t (printTree item)) >> ask >>= \(_, _, d) -> (case item of
+    NoInit ident -> do 
+        when (elem ident d) $ throwError $ "Redeclaration of " ++ (show ident)
+        return $ Map.insert ident t map
     Init ident expr -> do
+        when (elem ident d) $ throwError $ "Redeclaration of " ++ (show ident) ++ (show d)
         exprT <- checkExpr expr
         sameTypesOrErr t exprT $ printTree item
         return $ Map.insert ident t map
     InitAlloc ident objT -> do
+        when (elem ident d) $ throwError $ "Redeclaration of " ++ (show ident)
         sameTypesOrErr t objT $ printTree item
         return $ Map.insert ident t map
     ArrIAlloc ident arrT expr -> do
+        when (elem ident d) $ throwError $ "Redeclaration of " ++ (show ident)
         sameTypesOrErr t (Arr arrT) $ printTree item
         exprT <- checkExpr expr
         sameTypesOrErr exprT Int $ printTree item
@@ -230,22 +240,39 @@ typeCorrect t eMsg = case t of
 
 classDefined :: Ident -> String -> TCMonad ()
 classDefined ident eMsg = do
-    env <- asks $ (Map.lookup ident) . snd
+    env <- asks $ (Map.lookup ident) . snd3
     case env of
         Nothing -> throwError $ "Unknown class " ++ (printTree ident) ++ " in " ++ eMsg
         Just _ -> return ()
 
 checkFunc :: [Arg] -> [Stmt] -> Type -> TCMonad ()
-checkFunc args body t = localF (foldr (.) id (zipWith Map.insert (map a2id args) (map a2t args))) $ checkStmts body t 
+checkFunc args body t = let paramIds = map a2id args in
+    let repId = hasRepeated paramIds in 
+        unless (repId == Nothing) (throwError $ "Repeated function parameter " ++ (show $ fromJust repId)) >>
+            (localF (foldr (.) id (zipWith Map.insert paramIds (map a2t args))) [] $ checkStmts body t) >> 
+                unless (t == Void) (if null body then throwError "No return statement" else checkReturn $ last body)
+
+hasRepeated :: [Ident] -> Maybe Ident
+hasRepeated [] = Nothing
+hasRepeated (x:xs) = if elem x xs then Just x else hasRepeated xs
+
+checkReturn :: Stmt -> TCMonad ()
+checkReturn stmt = case stmt of
+    BStmt (Block stmts) -> if null stmts then throwError "No return statement" else checkReturn $ last stmts
+    Ret _ -> return ()
+    Cond e stmt -> if e == ELitTrue then checkReturn stmt else throwError "No return statement"
+    CondElse e iSt eSt -> (unless (e == ELitFalse) (checkReturn iSt)) >> unless (e == ELitTrue) (checkReturn eSt)
+    While e stmt -> if e /= ELitFalse then checkReturn stmt else throwError "No return statement"
+    _ -> throwError "No return statement"
 
 findClassAncs :: Ident -> TCMonad (Maybe [Ident])
-findClassAncs ident = asks $ (maybe Nothing (Just . snd)) . (Map.lookup ident) . snd 
+findClassAncs ident = asks $ (maybe Nothing (Just . snd)) . (Map.lookup ident) . snd3 
 
 findClassEnv :: Ident -> TCMonad (Map.Map Ident Type)
-findClassEnv ident = asks $ fst . fromJust . (Map.lookup ident) . snd 
+findClassEnv ident = asks $ fst . fromJust . (Map.lookup ident) . snd3 
 
 findType :: Ident -> TCMonad (Maybe Type)
-findType ident = asks $ (Map.lookup ident) . fst
+findType ident = asks $ (Map.lookup ident) . fst3
 
 sameTypesOrErr :: Type -> Type -> String -> TCMonad ()
 sameTypesOrErr t1 t2 eMsg = if t1 == t2 then return () else checkAncs t1 t2 $ "can't match types " ++ (printTree t1) ++ (printTree t2) ++ " in " ++ eMsg
@@ -263,10 +290,10 @@ checkAncs _ _ eMsg = throwError eMsg
 startEnv :: TCEnv
 startEnv = (Map.fromList [(Ident "printInt", Fun Void [Int]),
     (Ident "printString", Fun Void [Str]), (Ident "error", Fun Void []),
-    (Ident "readInt", Fun Int []), (Ident "readString", Fun Str [])], Map.empty)
+    (Ident "readInt", Fun Int []), (Ident "readString", Fun Str [])], Map.empty, [])
 
-localF :: (Map.Map Ident Type -> Map.Map Ident Type) -> TCMonad a -> TCMonad a
-localF func monad = local (\(funs, clses) -> (func funs, clses)) monad
+localF :: (Map.Map Ident Type -> Map.Map Ident Type) -> [Ident] -> TCMonad a -> TCMonad a
+localF func idents monad = local (\(funs, clses, d) -> (func funs, clses, d ++ idents)) monad
 
 a2t :: Arg -> Type
 a2t (Arg t _) = t
@@ -279,3 +306,7 @@ i2id it = case it of
     NoInit id -> id
     Init id _ -> id
     InitAlloc id _ -> id
+
+fst3 (x, _, _) = x
+snd3 (_, x, _) = x
+trd3 (_, _, x) = x
