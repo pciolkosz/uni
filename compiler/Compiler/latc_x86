@@ -1,0 +1,10 @@
+#/bin/bash
+
+if ./src/Compiler $1; then
+    nasm -f elf32 "${1%.lat}.s"
+    gcc -m32 -o "${1%.lat}" "${1%.lat}.o" lib/runtime.o
+else
+    exit 1
+fi
+
+
