@@ -10,16 +10,14 @@ type CompilerState = [Val]
 
 type CompilerMonad = StateT CompilerState (Writer String)
 
-compile :: ([Blck], [Literal], Int) -> String
-compile (blcks, literals, regs) = "section .text\n" ++ externs ++ 
+compile :: ([Blck], [Literal]) -> String
+compile (blcks, literals) = "section .text\n" ++ externs ++ 
     (execWriter $ evalStateT (prepCompMonad blcks) []) ++  
-    "\n\nsection .bss\n__TMPREGS__:\nresb " ++ (show $ regs * 4) ++ 
     "\n\nsection .data\n" ++ (compileLiterals literals)
 
 prepCompMonad :: [Blck] -> CompilerMonad ()
 prepCompMonad [] = return ()
 prepCompMonad (blck:rest) = case blck of
-    NoNameBlck instrs -> compileInstrs (reverse instrs) >> put [] >> prepCompMonad rest
     Blck name instrs -> tellLane (name ++ ":") >> put [] >> compileInstrs (reverse instrs) >> prepCompMonad rest
 
 compileInstrs :: Instrs -> CompilerMonad ()
@@ -40,7 +38,7 @@ compileInstrs (instr:rest) = (case instr of
         movToEax val
         tellLane $ "test eax, eax"
         tellLane $ (if expect then "jne " else "je ") ++ l
-        put [] --TODO maybe val?
+        put [] 
     IJmp l -> tellLane $ "jmp " ++ l
     Iassign dst src -> do
         srcRep <- getValRep src
@@ -66,7 +64,7 @@ compileInstrs (instr:rest) = (case instr of
             OpAnd l -> "and eax, " ++ opr2Rep ++ "\n" ++ l ++ ":"
             OpOr l -> "or eax, " ++ opr2Rep ++ "\n" ++ l ++ ":"
             Rel rop -> "cmp eax, " ++ opr2Rep ++ "\nset" ++ (toLower <$> show rop) ++ " al\nand eax, 0xff"
-            OpStrAdd -> "push DWORD " ++ opr2Rep ++ "\npush DWORD " ++ opr1Rep ++ "\ncall __CONCAT_STRINGS__\nsub esp, 8"
+            OpStrAdd ->"push DWORD " ++ opr2Rep ++ "\npush DWORD " ++ opr1Rep ++ "\ncall __CONCAT_STRINGS__\nsub esp, 8"
         tellLane $ "mov " ++ dstRep ++ ", eax"
         put [dst]
     ISop op dst src -> do
@@ -83,7 +81,7 @@ compileInstrs (instr:rest) = (case instr of
     Dec val -> do
         valRep <- getValRep val
         tellLane $ "dec DWORD " ++ valRep
-    IgrowStack i -> if i == 0 then return () else tellLane $ "sub esp, " ++ (s4 i)
+    IgrowStack i -> tellLane $ "sub esp, " ++ (s4 i)
     IcutStack i -> if i == 0 then return () else tellLane $ "add esp, " ++ (s4 i)
     Inop -> tellLane "nop"
     Iprolog -> do
@@ -95,6 +93,7 @@ compileInstrs (instr:rest) = (case instr of
     Ipop val -> do
         valRep <- getValRep val
         tellLane $ "pop DWORD " ++ valRep
+    Ilabel l -> (tellLane $ l ++ ":") >> put []
     ) >> compileInstrs rest
 
 
@@ -109,7 +108,6 @@ getValRep val = do
         VConst i _ -> show i
         VParam i _ -> "[ebp + " ++ (s4 i) ++ "]"
         VLocal i _ -> "[ebp - " ++ (s4 i) ++ "]"
-        Loc i _ -> "[__TMPREGS__ + " ++ (s4 i) ++ "]"
         Reg r _ -> r
         LitStr label -> label
 

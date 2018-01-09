@@ -1,0 +1,15 @@
+Piotr Ciołkosz 359067
+
+Kompilator Latte
+
+Kompilacja poprzez make. 
+Uruchamianie: latc_x86 file.lat
+Używane narzędzia: bnfc, haskell
+Biblioteki: mtl
+Zaimplementowane rozszerzenia: brak
+Struktura katalogów: Pliki źródłowe kompilatora w src, plik z funkcjami pomocniczymi: lib/runtime.c
+
+Sparsowany kod jest sprawdzany przez funkcje z pliku TypeCheck.hs pod kątem poprawności.
+Następnie jest on przepisywany na kod pośredni zdefiniowany w Intermediate.hs przez funkcje z ToInter.hs
+Na koniec kod pośredni kompilowany jest do asemblera x86 w wersji 32-bit przez funkcje z ToAsm.hs
+

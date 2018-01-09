@@ -28,22 +28,27 @@ prepareTopEnv (def:rest) (vEnv, cEnv, d) =
         FnDef t ident args _ -> return (Map.insert ident (Fun t (map a2t args)) vEnv, cEnv, d);
         ClDef ident members -> return (vEnv, Map.insert ident (prepClsTopEnv members, []) cEnv, d);
         DepClDef ident anc members -> case Map.lookup anc cEnv of
-            Just (ancEnv, superClses) -> return (vEnv, Map.insert ident (Map.union (prepClsTopEnv members) ancEnv, (anc:superClses)) cEnv, d)
-            Nothing -> throwError $ "Class " ++ (printTree ident) ++ " can't extend unknown class " ++ (printTree anc) ++ "\n"} 
+            Just (ancEnv, superClses) -> return (vEnv, Map.insert ident 
+                (Map.union (prepClsTopEnv members) ancEnv, (anc:superClses)) cEnv, d)
+            Nothing -> throwError $ "Class " ++ (printTree ident) ++ 
+                " can't extend unknown class " ++ (printTree anc) ++ "\n"} 
     in envMonad >>= \newEnv -> prepareTopEnv rest newEnv
 
 prepareTCMonad :: [TopDef] -> TCMonad ()
 prepareTCMonad [] = return ()
 prepareTCMonad (def:rest) = case def of {
-    FnDef t _ args (Block body) -> catchError (checkFunc args body t) (\error -> throwError $ error ++ "\n in function\n" ++ (printTree def));
-    ClDef ident members -> findClassEnv ident >>= \env -> localF (Map.union env) [] $ checkMembers members;
-    DepClDef ident anc members -> findClassEnv ident >>= \env -> localF (Map.union env) [] $ checkMembers members
-} >> prepareTCMonad rest --TODO last to cases are the same
+    FnDef t _ args (Block body) -> catchError (checkFunc args body t) 
+        (\error -> throwError $ error ++ "\n in function\n" ++ (printTree def));
+    ClDef ident members -> 
+        findClassEnv ident >>= \env -> localF (Map.union env) [] $ checkMembers members;
+    DepClDef ident anc members -> 
+        findClassEnv ident >>= \env -> localF (Map.union env) [] $ checkMembers members
+} >> prepareTCMonad rest
 
 prepClsTopEnv :: [MemberDef] -> Map.Map Ident Type
 prepClsTopEnv [] = Map.empty
 prepClsTopEnv (def:rest) = case def of
-    MAttr t items -> foldr (flip Map.insert $ t) (prepClsTopEnv rest) $ map i2id items --TODO is foldl faster?
+    MAttr t items -> foldr (flip Map.insert $ t) (prepClsTopEnv rest) $ map i2id items
     MMethod t id args _ -> Map.insert id (Fun t $ map a2t args) $ prepClsTopEnv rest
 
 checkMembers :: [MemberDef] -> TCMonad ()
@@ -95,7 +100,8 @@ checkExpr expr = case expr of
                     Just (Fun retT args) -> do
                         checkCall params args $ printTree expr
                         return retT
-                    _ -> throwError $ "Class " ++ (printTree classId) ++ " has no method " ++ (printTree ident) ++ " in " ++ (printTree expr)
+                    _ -> throwError $ "Class " ++ (printTree classId) ++ " has no method " ++ 
+                            (printTree ident) ++ " in " ++ (printTree expr)
             _ -> throwError $ "Non-class types does not have attributes in " ++ (printTree expr)
     EVar ident -> do
         varT <- findType ident
@@ -157,7 +163,8 @@ checkStmts (stmt:rest) retT = case stmt of
     Decl t items -> let newIds = (map i2id items) in let repId = hasRepeated newIds in do 
         unless (repId == Nothing) $ throwError $ "Repeated declaration " ++ (show repId)
         env <- ask
-        newEnv <- catchError (checkDecls items t . fst3 $ env) (\error -> throwError $ error ++ "\nin declaration\n" ++ (printTree stmt))
+        newEnv <- catchError (checkDecls items t . fst3 $ env) 
+            (\error -> throwError $ error ++ "\nin declaration\n" ++ (printTree stmt))
         localF (const newEnv) (newIds) $ checkStmts rest retT
     _ -> (case stmt of
         Cond expr st -> do
@@ -282,7 +289,8 @@ findType :: Ident -> TCMonad (Maybe Type)
 findType ident = asks $ (Map.lookup ident) . fst3
 
 sameTypesOrErr :: Type -> Type -> TCMonad ()
-sameTypesOrErr t1 t2 = if t1 == t2 then return () else checkAncs t1 t2 $ "can't match types " ++ (printTree t1) ++ " and " ++ (printTree t2)
+sameTypesOrErr t1 t2 = if t1 == t2 then return () else 
+        checkAncs t1 t2 $ "can't match types " ++ (printTree t1) ++ " and " ++ (printTree t2)
 
 checkAncs :: Type -> Type -> String -> TCMonad ()
 checkAncs (Class c1) (Class c2) eMsg = findClassAncs c2 >>= \ancs -> case ancs of

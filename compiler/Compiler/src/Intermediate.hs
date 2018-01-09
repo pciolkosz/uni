@@ -20,9 +20,10 @@ data Instr
   | Iprolog
   | Ipush Val
   | Ipop Val
+  | Ilabel String
     deriving Show
 
-data Blck = FnBlck String Instrs | Blck String Instrs | NoNameBlck Instrs
+data Blck = FnBlck String Instrs | Blck String Instrs
     deriving Show
 
 data Op = Add AddOp | Mul MulOp | OpAnd String | OpOr String | Rel RelOp | OpStrAdd 
@@ -31,7 +32,7 @@ data Op = Add AddOp | Mul MulOp | OpAnd String | OpOr String | Rel RelOp | OpStr
 data SOp = Ng | Nt
     deriving Show
 
-data Val = VConst Int Type | VParam Int Type | VLocal Int Type | Loc Int Type | Reg String Type | LitStr String
+data Val = VConst Int Type | VParam Int Type | VLocal Int Type | Reg String Type | LitStr String
     deriving (Show, Eq)
 
 type Instrs = [Instr]

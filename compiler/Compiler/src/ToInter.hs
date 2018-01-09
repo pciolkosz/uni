@@ -18,30 +18,32 @@ type TransEnv = (Map.Map String Val, Int, FuncsTypes)
 type TranslatorMonad = WriterT [Blck] (WriterT [Literal] (StateT TransState (Reader TransEnv)))
 
 
-translate :: Program -> FuncsTypes -> ([Blck], [Literal], Int)
-translate (Program defs) fts = let ((blcks, lits), (regs, _)) = runReader (runStateT (runWriterT $ execWriterT $ prepTransMonad defs) (1, 0)) (Map.empty, 1, fts) in (blcks, lits, regs)
+translate :: Program -> FuncsTypes -> ([Blck], [Literal])
+translate (Program defs) fts = 
+    let (blcks, lits) = runReader (evalStateT (runWriterT $ execWriterT $ prepTransMonad defs) (0, 0)) (Map.empty, 1, fts) in (blcks, lits)
 
 prepTransMonad :: [TopDef] -> TranslatorMonad ()
 prepTransMonad [] = return () 
-prepTransMonad (def:rest) = transDef def >> prepTransMonad rest 
+prepTransMonad (def:rest) = transDef def >> modify (\(labs, _) -> (labs, 0)) >> prepTransMonad rest 
 
 transDef :: TopDef -> TranslatorMonad ()
 transDef (FnDef ftype (Ident ident) args (Block stmts)) = let argsLen = length args in
     local (\(env, locals, fts) -> (Map.union 
         (Map.fromList (zipWith (\(Arg argT (Ident ident)) nr -> 
             (ident, VParam nr argT)) args [argsLen + 1, argsLen..2])) env,
-            locals, fts)) $ transStmts (if null stmts then [VRet] else stmts) (FnBlck ident []) >> return ()
+            locals, fts)) $ transStmts 
+                (if null stmts then [VRet] else stmts) (FnBlck ident []) >>= tellBlck >> return ()
 
 getFromEnv :: String -> TranslatorMonad Val
 getFromEnv ident = do 
     (env, _, _) <- ask
     return $ fromJust $ Map.lookup ident env
 
-newReg :: TranslatorMonad Int
-newReg = do
-    (regNr, labNr) <- get
-    put (regNr + 1, labNr)
-    return regNr
+newReg :: (Int -> TranslatorMonad a) -> TranslatorMonad a
+newReg monadF = do
+    (_, locals, _) <- ask
+    modify (\(labs, maxRegs) -> (labs, max maxRegs (locals + 1)))
+    local (\(env, locs, fts) -> (env, locs + 1, fts)) $ monadF locals
 
 newLocal :: Ident -> Type -> TranslatorMonad a -> TranslatorMonad a
 newLocal (Ident ident) locT monad = local (\(env, locals, fts) -> 
@@ -49,11 +51,11 @@ newLocal (Ident ident) locT monad = local (\(env, locals, fts) ->
 
 newLabel :: TranslatorMonad String
 newLabel = do
-    (regNr, labNr) <- get
-    put (regNr, labNr + 1)
+    (labNr, maxRegs) <- get
+    put $ (labNr + 1, maxRegs)
     return ('L':show labNr)
 
-declAssigns :: Type -> [Item] -> (Instrs -> TranslatorMonad ()) -> [Instrs] -> TranslatorMonad ()
+declAssigns :: Type -> [Item] -> (Instrs -> TranslatorMonad a) -> [Instrs] -> TranslatorMonad a
 declAssigns _ [] monad prevs = monad $ concat prevs
 declAssigns dtype (item:rest) monad prevs = case item of
     NoInit ident -> declAssigns dtype (Init ident (defaultValExpr dtype):rest) monad prevs
@@ -78,19 +80,20 @@ addInstrs :: Instrs -> Blck -> Blck
 addInstrs newInstrs blck = case blck of
     Blck name instrs -> Blck name $ newInstrs ++ instrs
     FnBlck name instrs -> FnBlck name $ newInstrs ++ instrs
-    NoNameBlck instrs -> NoNameBlck $ newInstrs ++ instrs
 
 tellBlck :: Blck -> TranslatorMonad ()
 tellBlck (FnBlck name instrs) = do
-    (_, locals, _) <- ask
-    tell [Blck name (instrs ++ [IgrowStack locals, Iprolog])]
+    (_, regsAndLocals) <- get
+    tell [Blck name (instrs ++ [IgrowStack regsAndLocals, Iprolog])]
 tellBlck blck = tell [blck]
 
-transStmts :: [Stmt] -> Blck -> TranslatorMonad () 
-transStmts [] blck = tellBlck blck
+transStmts :: [Stmt] -> Blck -> TranslatorMonad Blck
+transStmts [] blck = return blck
 transStmts (stmt:rest) blck = case stmt of
     Empty -> transStmts rest $ addInstrs [Inop] blck
-    BStmt (Block stmts) -> tellBlck blck >> transStmts stmts (NoNameBlck []) >> (transStmts rest) (NoNameBlck [])
+    BStmt (Block stmts) -> do
+        afterBlck <- transStmts stmts blck
+        transStmts rest afterBlck
     Decl dtype items -> declAssigns dtype items (\assignInstrs -> transStmts rest $ addInstrs assignInstrs blck) []
     Ass expr1 expr2 -> do
         (val, exp1Ins) <- transExp expr1
@@ -103,75 +106,89 @@ transStmts (stmt:rest) blck = case stmt of
     Cond expr stmt -> do
         label <- newLabel
         (val, expInstrs) <- transExp $ Not expr
-        transStmts [stmt] $ addInstrs (ICjmp val label True:expInstrs) blck
-        transStmts rest $ Blck label []
+        oldBlck <- transStmts [stmt] $ addInstrs (ICjmp val label True:expInstrs) blck
+        transStmts rest $ addInstrs [Ilabel label] $ oldBlck
     CondElse expr iStmt eStmt -> do
         ifLabel <- newLabel
         nextLabel <- newLabel
         (val, expInstrs) <- transExp $ expr
-        transStmts [eStmt] $ addInstrs (ICjmp val ifLabel True:expInstrs) blck
-        unless (null rest) $ tellBlck $ NoNameBlck [(IJmp nextLabel)]
-        transStmts [iStmt] $ Blck ifLabel []
-        unless (null rest) $ transStmts rest $ Blck nextLabel []
+        oldBlck <- transStmts [eStmt] $ addInstrs (ICjmp val ifLabel True:expInstrs) blck
+        if (null rest) then
+            transStmts [iStmt] $ addInstrs [Ilabel ifLabel] oldBlck
+        else do
+            afterIfBlck <- transStmts [iStmt] $ addInstrs [Ilabel ifLabel, IJmp nextLabel] oldBlck
+            transStmts rest $ addInstrs [Ilabel nextLabel] afterIfBlck
     While expr stmt -> do
         checkLabel <- newLabel
         loopLabel <- newLabel
-        tellBlck $ addInstrs [IJmp checkLabel] blck
-        transStmts [stmt] $ Blck loopLabel []
+        oldBlck <- transStmts [stmt] $ addInstrs [Ilabel loopLabel, IJmp checkLabel] blck
         (val, expInstrs) <- transExp $ expr
-        transStmts rest $ Blck checkLabel (ICjmp val loopLabel True:expInstrs)
+        transStmts rest $ addInstrs (ICjmp val loopLabel True:expInstrs ++ [Ilabel checkLabel]) oldBlck
     SExp expr -> transExp expr >>= \(_, expInstrs) -> transStmts rest $ addInstrs expInstrs blck
-    
+
 transExp :: Expr -> TranslatorMonad (Val, [Instr])
-transExp expr = case expr of
-    EVar (Ident i) -> getFromEnv i >>= (\val -> return (val, []))
-    ELitInt i -> return (VConst (fromInteger i) Int, [])
-    ELitTrue -> return (VConst 1 Bool, [])
-    ELitFalse -> return (VConst 0 Bool, [])
-    EApp fid@(Ident ident) params -> do 
-        instrs <- liftM concat (mapM (liftM (\(val, instrs) -> ((Ipush val):instrs)) . transExp) $ reverse params)
-        (_, _, fTypes) <- ask
-        let (Fun retT _) = fromJust $ Map.lookup fid fTypes
-        return (Reg "eax" retT, (IcutStack (length params):Icall ident:instrs))
-    EString lit -> do
-        litLabel <- newLabel
-        lift . tell $ [(litLabel, lit)]
-        return (LitStr litLabel, [])
-    Neg expr -> do
-        (val, instrs) <- transExp expr
-        regNr <- newReg
-        let result = (Loc regNr $ getValType val) in 
-            return (result, (ISop Ng result val):instrs)
-    Not expr -> do
-        (val, instrs) <- transExp expr
-        regNr <- newReg
-        let result = (Loc regNr $ getValType val) in 
-            return (result, (ISop Nt result val):instrs)
-    EMul expr1 op expr2 -> binOp expr1 expr2 $ Mul op
-    EAdd expr1 op expr2 -> binOp expr1 expr2 $ Add op
-    ERel expr1 op expr2 -> binOp expr1 expr2 $ Rel op
+transExp exp = do
+    (res, _) <- transTwoExps exp Nothing
+    return res
+
+-- Translate two exps at once to allow exp2 to be translated in environment left by exp1 
+transTwoExps :: Expr -> Maybe Expr -> TranslatorMonad ((Val, [Instr]), Maybe (Val, [Instr]))
+transTwoExps exp1 exp2 = case exp1 of
+    EMul expr1 op expr2 -> binOp expr1 expr2 exp2 $ Mul op
+    EAdd expr1 op expr2 -> binOp expr1 expr2 exp2 $ Add op
+    ERel expr1 op expr2 -> binOp expr1 expr2 exp2 $ Rel op
     EAnd expr1 expr2 -> do
         lab <- newLabel
-        binOp expr1 expr2 $ OpAnd lab
+        binOp expr1 expr2 exp2 $ OpAnd lab
     EOr expr1 expr2 -> do 
         lab <- newLabel
-        binOp expr1 expr2 $ OpOr lab
+        binOp expr1 expr2 exp2 $ OpOr lab
+    Neg expr -> do
+        (val, instrs) <- transExp expr
+        newReg (\regNr -> let result = (VLocal regNr $ getValType val) in 
+            return (result, (ISop Ng result val):instrs)) >>= mergeExpResults exp2
+    Not expr -> do
+        (val, instrs) <- transExp expr
+        newReg (\regNr -> let result = (VLocal regNr $ getValType val) in 
+            return (result, (ISop Nt result val):instrs)) >>= mergeExpResults exp2
+    _ -> (case exp1 of
+        EVar (Ident i) -> getFromEnv i >>= (\val -> return (val, []))
+        ELitInt i -> return (VConst (fromInteger i) Int, [])
+        ELitTrue -> return (VConst 1 Bool, [])
+        ELitFalse -> return (VConst 0 Bool, [])
+        EApp fid@(Ident ident) params -> do 
+            instrs <- liftM concat (mapM (liftM (\(val, instrs) -> ((Ipush val):instrs)) . transExp) $ reverse params)
+            (_, _, fTypes) <- ask
+            let (Fun retT _) = fromJust $ Map.lookup fid fTypes
+            return (Reg "eax" retT, (IcutStack (length params):Icall ident:instrs))
+        EString lit -> do
+            litLabel <- newLabel
+            lift . tell $ [(litLabel, lit)]
+            return (LitStr litLabel, [])
+        ) >>= (mergeExpResults exp2)
+ 
+mergeExpResults :: Maybe Expr -> (Val, [Instr]) -> TranslatorMonad ((Val, [Instr]), Maybe (Val, [Instr]))
+mergeExpResults exp2 e1R = 
+    if exp2 == Nothing then return (e1R, Nothing) else do
+        (e2R, _) <- transTwoExps (fromJust exp2) Nothing
+        return (e1R, Just e2R)
 
-binOp :: Expr -> Expr -> Op -> TranslatorMonad (Val, [Instr])
-binOp expr1 expr2 op = do
-    (val1, instrs1) <- transExp expr1
-    (val2, instrs2) <- transExp expr2 --TODO order to save regs
-    regNr <- newReg
-    let a = getLazyInstrs op in
-        let v1T = getValType val1 in 
-            let resultT = getBinOpType (op, v1T, getValType val2) in
-                let result = Loc regNr resultT in
-                     let resultOp = if (op, resultT) == (Add Plus, Str) then OpStrAdd else op in
-                        if isEax val2 then
-                            return $ (result, (Iop resultOp result (Reg "eax" v1T) (Reg "edx" v1T)):
-                                (Ipop (Reg "eax" v1T)):
-                                    (Iassign (Reg "edx" v1T) (Reg "eax" v1T)):(instrs2 ++ (Ipush val1:(a ++ instrs1)))) --TODO v2t
-                        else return (result, (Iop resultOp result val1 val2):(instrs2 ++ a ++ instrs1))
+
+binOp :: Expr -> Expr -> Maybe Expr -> Op -> TranslatorMonad ((Val, [Instr]), Maybe (Val, [Instr]))
+binOp expr1 expr2 nextExp op = do
+    ((val1, instrs1), maybeE2R) <- transTwoExps expr1 $ Just expr2
+    let (val2, instrs2) = fromJust maybeE2R in
+        newReg (\regNr -> let a = getLazyInstrs op in
+            let v1T = getValType val1 in 
+                let resultT = getBinOpType (op, v1T, getValType val2) in
+                    let result = VLocal regNr resultT in
+                         let resultOp = if (op, resultT) == (Add Plus, Str) then OpStrAdd else op in
+                            (if isEax val2 then --check if val2 is eax and push expr1 result for later use if so
+                                return $ (result, (Iop resultOp result (Reg "eax" v1T) (Reg "edx" v1T)):
+                                    (Ipop (Reg "eax" v1T)):
+                                        (Iassign (Reg "edx" v1T) (Reg "eax" v1T)):(instrs2++(Ipush val1:(a++instrs1))))
+                            else return (result, (Iop resultOp result val1 val2):(instrs2 ++ a ++ instrs1))
+                            ) >>= (mergeExpResults nextExp))
 
 
 getLazyInstrs :: Op -> [Instr]
@@ -189,7 +206,6 @@ getValType val = case val of
     VConst _ t -> t
     VParam _ t -> t
     VLocal _ t -> t
-    Loc _ t -> t
     Reg _ t -> t
     LitStr _ -> Str
 
