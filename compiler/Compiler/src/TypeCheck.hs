@@ -318,6 +318,7 @@ i2id it = case it of
     NoInit id -> id
     Init id _ -> id
     InitAlloc id _ -> id
+    ArrIAlloc id _ _ -> id
 
 fst3 (x, _, _) = x
 snd3 (_, x, _) = x

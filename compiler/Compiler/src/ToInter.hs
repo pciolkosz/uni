@@ -62,13 +62,18 @@ declAssigns dtype (item:rest) monad prevs = case item of
     Init ident expr -> do
         (_, locNr, _) <- ask
         assignInstrs <- assign (VLocal locNr dtype) expr
-        newLocal ident dtype $ declAssigns dtype rest monad (assignInstrs:prevs) 
+        newLocal ident dtype $ declAssigns dtype rest monad (assignInstrs:prevs)
+    ArrIAlloc ident _ expr -> do
+        (_, locNr, _) <- ask
+        (val, instrs) <- transExp expr
+        newLocal ident dtype $ declAssigns dtype rest monad ((Ipop (VLocal locNr dtype):(allocArr val instrs)):prevs)
 
 defaultValExpr :: Type -> Expr
 defaultValExpr t = case t of
     Int -> ELitInt 0
     Str -> EString ""
     Bool -> ELitFalse
+    Arr _ -> ELitInt 0
 
 assign :: Val -> Expr -> TranslatorMonad [Instr]
 assign val expr = do
@@ -90,15 +95,23 @@ tellBlck blck = tell [blck]
 transStmts :: [Stmt] -> Blck -> TranslatorMonad Blck
 transStmts [] blck = return blck
 transStmts (stmt:rest) blck = case stmt of
+    ArrAlloc exp1 t exp2 -> do
+        ((val1, exp1Instrs), Just (val2, exp2Instrs)) <- transTwoExps exp1 (Just exp2)
+        transStmts rest $ addInstrs ((Ipop val1):exp1Instrs ++ (allocArr val2 exp2Instrs)) blck
     Empty -> transStmts rest $ addInstrs [Inop] blck
     BStmt (Block stmts) -> do
         afterBlck <- transStmts stmts blck
         transStmts rest afterBlck
     Decl dtype items -> declAssigns dtype items (\assignInstrs -> transStmts rest $ addInstrs assignInstrs blck) []
-    Ass expr1 expr2 -> do
-        (val, exp1Ins) <- transExp expr1
-        assignInstrs <- assign val expr2
-        transStmts rest $ addInstrs (assignInstrs ++ exp1Ins) blck
+    Ass expr1 expr2 -> 
+        case expr1 of
+            EArrAcc _ _ -> do
+                ((val1, _:exp1Ins), Just (val2, exp2Ins)) <- transTwoExps expr1 $ Just expr2
+                transStmts rest $ addInstrs (IwritePtr val2:exp1Ins ++ exp2Ins) blck
+            _ -> do 
+                (val1, exp1Ins) <- transExp expr1
+                assignInstrs <- assign val1 expr2
+                transStmts rest $ addInstrs (assignInstrs ++ exp1Ins) blck
     Incr (Ident ident) -> getFromEnv ident >>= \val -> transStmts rest $ addInstrs [Inc val] blck
     Decr (Ident ident) -> getFromEnv ident >>= \val -> transStmts rest $ addInstrs [Dec val] blck
     Ret expr -> transExp expr >>= \(val, expInstrs) -> transStmts rest $ addInstrs ((Iret val):expInstrs) blck
@@ -125,6 +138,12 @@ transStmts (stmt:rest) blck = case stmt of
         (val, expInstrs) <- transExp $ expr
         transStmts rest $ addInstrs (ICjmp val loopLabel True:expInstrs ++ [Ilabel checkLabel]) oldBlck
     SExp expr -> transExp expr >>= \(_, expInstrs) -> transStmts rest $ addInstrs expInstrs blck
+    SFor t ident coll stmt -> let tmpId = Ident "__tmp_iter__" in
+        transStmts (Decl Int [Init tmpId (ELitInt 0)]:While (ERel (EVar tmpId) L (EMember (EVar coll) $ Ident "length")) (BStmt $ Block [Decl t [Init ident (EArrAcc (EVar coll) (EVar tmpId))],stmt,Incr tmpId]):rest) blck
+
+allocArr :: Val -> Instrs -> Instrs
+allocArr val instrs = (Ipush $ Reg "eax" Void):IcutStack 2:IwritePtr (Reg "[esp+4]" Int):(Icall 
+    "malloc"):(Ipush $ Reg "eax" Void):(plus1Times4 val) ++ (Ipush val):instrs
 
 transExp :: Expr -> TranslatorMonad (Val, [Instr])
 transExp exp = do
@@ -134,6 +153,16 @@ transExp exp = do
 -- Translate two exps at once to allow exp2 to be translated in environment left by exp1 
 transTwoExps :: Expr -> Maybe Expr -> TranslatorMonad ((Val, [Instr]), Maybe (Val, [Instr]))
 transTwoExps exp1 exp2 = case exp1 of
+    EArrAcc expr1 expr2 -> do
+        ((val1, exp1Instrs), Just (val2, exp2Instrs)) <- transTwoExps expr1 (Just $ plus1Times4Exp expr2)
+        let elemT = getArrType . getValType $ val1
+        newReg (\regNr -> let result = (VLocal regNr elemT) in
+            return (result, IreadPtr result:IcalcPtr val1 val2:exp1Instrs ++ exp2Instrs) >>= mergeExpResults exp2)
+    EMember expr _ -> do
+        (val, instrs) <- transExp expr
+        let elemT = getArrType . getValType $ val
+        newReg (\regNr -> let result = (VLocal regNr elemT) in
+            return (result, IreadPtr result:Iassign (Reg "eax" Void) val:instrs) >>= mergeExpResults exp2) 
     EMul expr1 op expr2 -> binOp expr1 expr2 exp2 $ Mul op
     EAdd expr1 op expr2 -> binOp expr1 expr2 exp2 $ Add op
     ERel expr1 op expr2 -> binOp expr1 expr2 exp2 $ Rel op
@@ -146,11 +175,11 @@ transTwoExps exp1 exp2 = case exp1 of
     Neg expr -> do
         (val, instrs) <- transExp expr
         newReg (\regNr -> let result = (VLocal regNr $ getValType val) in 
-            return (result, (ISop Ng result val):instrs)) >>= mergeExpResults exp2
+            return (result, (ISop Ng result val):instrs) >>= mergeExpResults exp2)
     Not expr -> do
         (val, instrs) <- transExp expr
         newReg (\regNr -> let result = (VLocal regNr $ getValType val) in 
-            return (result, (ISop Nt result val):instrs)) >>= mergeExpResults exp2
+            return (result, (ISop Nt result val):instrs) >>= mergeExpResults exp2)
     _ -> (case exp1 of
         EVar (Ident i) -> getFromEnv i >>= (\val -> return (val, []))
         ELitInt i -> return (VConst (fromInteger i) Int, [])
@@ -190,6 +219,12 @@ binOp expr1 expr2 nextExp op = do
                             else return (result, (Iop resultOp result val1 val2):(instrs2 ++ a ++ instrs1))
                             ) >>= (mergeExpResults nextExp))
 
+changeValType :: Val -> Type -> Val
+changeValType v t = case v of
+    VConst i _ -> VConst i t
+    VParam i _ -> VParam i t
+    VLocal i _ -> VLocal i t
+    Reg s _ -> Reg s t
 
 getLazyInstrs :: Op -> [Instr]
 getLazyInstrs op = case op of
@@ -200,6 +235,9 @@ getLazyInstrs op = case op of
 isEax :: Val -> Bool
 isEax (Reg "eax" _) = True
 isEax _ = False
+
+getArrType :: Type -> Type
+getArrType (Arr t) = t
 
 getValType :: Val -> Type
 getValType val = case val of
@@ -214,3 +252,9 @@ getBinOpType b = case b of
     (Rel _, Int, Int) -> Bool
     (Add Plus, Str, Str) -> Str
     (_, t1, t2) -> if t1 == t2 then t1 else error $ "Typecheck is wrong" ++ (show t1) ++ (show t2) ++ (show b)
+
+plus1Times4Exp :: Expr -> Expr
+plus1Times4Exp e = EMul (EAdd e Plus (ELitInt 1)) Times $ ELitInt 4
+
+plus1Times4 :: Val -> Instrs
+plus1Times4 val = [Iop (Mul Times) (Reg "eax" Int) (Reg "eax" Int) (VConst 4 Int), Iop (Add Plus) (Reg "eax" Int) val (VConst 1 Int)]

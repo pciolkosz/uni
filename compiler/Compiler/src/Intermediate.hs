@@ -21,6 +21,9 @@ data Instr
   | Ipush Val
   | Ipop Val
   | Ilabel String
+  | IcalcPtr Val Val
+  | IreadPtr Val
+  | IwritePtr Val
     deriving Show
 
 data Blck = FnBlck String Instrs | Blck String Instrs

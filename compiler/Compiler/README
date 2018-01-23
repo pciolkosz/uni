@@ -6,7 +6,7 @@ Kompilacja poprzez make.
 Uruchamianie: latc_x86 file.lat
 Używane narzędzia: bnfc, haskell
 Biblioteki: mtl
-Zaimplementowane rozszerzenia: brak
+Zaimplementowane rozszerzenia: tablice
 Struktura katalogów: Pliki źródłowe kompilatora w src, plik z funkcjami pomocniczymi: lib/runtime.c
 
 Sparsowany kod jest sprawdzany przez funkcje z pliku TypeCheck.hs pod kątem poprawności.

@@ -49,8 +49,10 @@ compileInstrs (instr:rest) = (case instr of
                 tellLane $ "mov " ++ dstRep ++ ", eax"
                 put [src, dst]
             else do
-                tellLane $ "mov DWORD " ++ dstRep ++ ", " ++ srcRep
+               tellLane $ "mov DWORD " ++ dstRep ++ ", " ++ srcRep
+        put []
     Iop op dst oper1 oper2 -> do
+        put []
         dstRep <- getValRep dst
         opr1Rep <- getValRep oper1
         unless (op == OpStrAdd || opr1Rep == "edx") $ movToEax oper1 >> put []
@@ -63,7 +65,7 @@ compileInstrs (instr:rest) = (case instr of
             Mul Mod -> "xor edx, edx\nmov ecx, " ++ opr2Rep ++ "\nidiv ecx\nmov eax, edx"
             OpAnd l -> "and eax, " ++ opr2Rep ++ "\n" ++ l ++ ":"
             OpOr l -> "or eax, " ++ opr2Rep ++ "\n" ++ l ++ ":"
-            Rel rop -> "cmp eax, " ++ opr2Rep ++ "\nset" ++ (toLower <$> show rop) ++ " al\nand eax, 0xff"
+            Rel rop -> "cmp eax, " ++ opr2Rep ++ "\nset" ++ (map toLower $ show rop) ++ " al\nand eax, 0xff"
             OpStrAdd ->"push DWORD " ++ opr2Rep ++ "\npush DWORD " ++ opr1Rep ++ "\ncall __CONCAT_STRINGS__\nsub esp, 8"
         tellLane $ "mov " ++ dstRep ++ ", eax"
         put [dst]
@@ -94,6 +96,21 @@ compileInstrs (instr:rest) = (case instr of
         valRep <- getValRep val
         tellLane $ "pop DWORD " ++ valRep
     Ilabel l -> (tellLane $ l ++ ":") >> put []
+    IcalcPtr ptr off -> do
+        ptrRep <- getValRep ptr
+        offRep <- getValRep off
+        if offRep == "eax" then do
+            tellLane $ "add eax, " ++ ptrRep
+        else do
+            unless (ptrRep == "eax") $ tellLane $ "mov eax, " ++ ptrRep
+            tellLane $ "add eax, " ++ offRep
+        put []
+    IwritePtr val -> do
+        valRep <- getValRep val
+        tellLane $ "mov edx, " ++ valRep ++ "\nmov [eax], edx"
+    IreadPtr dst -> do
+        dstRep <- getValRep dst
+        tellLane $ "mov eax, [eax]\nmov " ++ dstRep ++ ", eax"
     ) >> compileInstrs rest
 
 
@@ -116,6 +133,8 @@ bothMem (VConst _ _) _ = False
 bothMem _ (VConst _ _) = False
 bothMem (LitStr _) _ = False
 bothMem _ (LitStr _) = False
+bothMem _ (Reg _ _) = False
+bothMem (Reg _ _) _ = False
 bothMem _ _ = True
 
 s4 :: Int -> String
@@ -129,4 +148,4 @@ movToEax val = do
 compileLiterals :: [Literal] -> String
 compileLiterals = concat . map (\(lab, val) -> lab ++ "  db '" ++ val ++ "',0\n")
 
-externs = "global main\nextern printInt\nextern printString\nextern readInt\nextern readString\nextern error\nextern __CONCAT_STRINGS__\n\n" 
+externs = "global main\nextern malloc\nextern printInt\nextern printString\nextern readInt\nextern readString\nextern error\nextern __CONCAT_STRINGS__\n\n" 

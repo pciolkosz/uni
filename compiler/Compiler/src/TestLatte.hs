@@ -39,7 +39,8 @@ run path v p s = let ts = myLLexer s in
                           putStrV v $ show ts
                           putStrLn s
                           exitFailure
-           Ok  tree -> do 
+           Ok  tree -> do
+                          showTree 2 tree 
                           (typesOk, funcs) <- checkTypes tree
                           if typesOk then let inter = translate tree funcs in do
                                 fHandle <- openFile outPath WriteMode
